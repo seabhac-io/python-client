@@ -1,0 +1,881 @@
+openapi: "3.0.3"
+
+info:
+  title: Seabhac API
+  version: "1"
+  description: |
+    The Seabhac API gives programmatic access to your monitoring schedules,
+    job history, alert rules, metrics time series, and DMARC report data.
+
+    All endpoints require an API key passed in the `X-Api-Key` header.
+    Keys are scoped to an organisation and carry a monthly request limit.
+
+servers:
+  - url: https://api.seabhac.io
+    description: Production
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+
+  parameters:
+    scheduleId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Schedule UUID
+    jobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Job UUID
+    reportId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: DMARC report UUID
+    from:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+      description: Start of time range (RFC3339)
+    to:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+      description: End of time range (RFC3339)
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 50
+        maximum: 500
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+    domain:
+      name: domain
+      in: query
+      schema:
+        type: string
+      description: Filter by domain name
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found or does not belong to this organisation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    ScheduleConfig:
+      type: object
+      properties:
+        hostname:        { type: string }
+        dnsbl_servers:   { type: array, items: { type: string } }
+        domain_name:     { type: string }
+        record_types:    { type: array, items: { type: string } }
+        dns_servers:     { type: array, items: { type: string } }
+        server_host:     { type: string }
+        server_port:     { type: integer }
+        host:            { type: string }
+        port:            { type: integer }
+        proto:           { type: string }
+        expected_banner: { type: string }
+        timeout:         { type: integer, description: Timeout in seconds }
+        retry_count:     { type: integer }
+        notify_on_failure: { type: boolean }
+        baseline_enabled:  { type: boolean }
+        run_all_regions:   { type: boolean }
+        custom_fields:
+          type: object
+          additionalProperties: true
+
+    Schedule:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        user_id:         { type: string, format: uuid }
+        organization_id: { type: string, format: uuid, nullable: true }
+        name:            { type: string }
+        description:     { type: string }
+        type:
+          type: string
+          enum: [dnsbl, ehlo, dns, http, email_auth, tcp, udp, pageload, ssl, ssh, broken_links, domain_expiry, dmarc]
+        status:
+          type: string
+          enum: [active, inactive, paused]
+        region_id:   { type: string, format: uuid, nullable: true }
+        cron_expr:   { type: string }
+        config:      { $ref: "#/components/schemas/ScheduleConfig" }
+        baseline_enabled:    { type: boolean }
+        show_on_status_page: { type: boolean }
+        tags:        { type: array, items: { type: string } }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+        last_run_at: { type: string, format: date-time, nullable: true }
+        next_run_at: { type: string, format: date-time, nullable: true }
+
+    JobSummary:
+      type: object
+      properties:
+        total_checks:     { type: integer }
+        successful_checks: { type: integer }
+        failed_checks:    { type: integer }
+        execution_time_ms: { type: integer, format: int64 }
+
+    Job:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        schedule_id:   { type: string, format: uuid }
+        user_id:       { type: string, format: uuid }
+        type:
+          type: string
+          enum: [dnsbl, ehlo, dns, http, email_auth, tcp, udp, pageload, ssl, ssh, broken_links, domain_expiry, dmarc]
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled, retrying, paused]
+        started_at:    { type: string, format: date-time, nullable: true }
+        completed_at:  { type: string, format: date-time, nullable: true }
+        duration:      { type: integer, format: int64, nullable: true, description: Duration in nanoseconds }
+        error_message: { type: string, nullable: true }
+        region_id:     { type: string, format: uuid, nullable: true }
+        created_at:    { type: string, format: date-time }
+        results:
+          type: object
+          properties:
+            summary: { $ref: "#/components/schemas/JobSummary" }
+            dnsbl_results:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  server:     { type: string }
+                  listed:     { type: boolean }
+                  response:   { type: string }
+                  error:      { type: string }
+                  checked_at: { type: string, format: date-time }
+            dns_results:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:  { type: string }
+                    type:  { type: string }
+                    value: { type: string }
+                    ttl:   { type: integer }
+            ehlo_results:
+              type: object
+              nullable: true
+              properties:
+                connected:     { type: boolean }
+                ehlo_response: { type: string }
+                extensions:    { type: array, items: { type: string } }
+                error:         { type: string }
+                checked_at:    { type: string, format: date-time }
+            http_results:
+              type: object
+              nullable: true
+              properties:
+                status_code:      { type: integer }
+                response_time_ms: { type: integer, format: int64 }
+                success:          { type: boolean }
+                error:            { type: string }
+                checked_at:       { type: string, format: date-time }
+            email_auth_results:
+              type: object
+              nullable: true
+              properties:
+                spf_record:       { type: string }
+                spf_valid:        { type: boolean }
+                spf_error:        { type: string }
+                dmarc_record:     { type: string }
+                dmarc_valid:      { type: boolean }
+                dmarc_error:      { type: string }
+                dkim_valid:       { type: boolean }
+                dkim_error:       { type: string }
+                response_time_ms: { type: integer, format: int64 }
+                success:          { type: boolean }
+                checked_at:       { type: string, format: date-time }
+            tcp_result:
+              type: object
+              nullable: true
+              properties:
+                connected:        { type: boolean }
+                response_time_ms: { type: integer, format: int64 }
+                error:            { type: string, nullable: true }
+                checked_at:       { type: string, format: date-time }
+            udp_result:
+              type: object
+              nullable: true
+              properties:
+                reachable:        { type: boolean }
+                response_time_ms: { type: integer, format: int64 }
+                error:            { type: string, nullable: true }
+                checked_at:       { type: string, format: date-time }
+            ssl_result:
+              type: object
+              nullable: true
+              properties:
+                domain:           { type: string }
+                expiry:           { type: string, format: date-time }
+                is_valid:         { type: boolean }
+                is_self_signed:   { type: boolean }
+                dns_names:        { type: array, items: { type: string } }
+                issuer:           { type: string }
+                subject:          { type: string }
+                cipher_suite:     { type: string }
+                protocol_version: { type: string }
+                response_time:    { type: integer, format: int64, description: Duration in nanoseconds }
+                error:            { type: string, nullable: true }
+                checked_at:       { type: string, format: date-time }
+            ssh_result:
+              type: object
+              nullable: true
+              properties:
+                host:          { type: string }
+                port:          { type: integer }
+                connected:     { type: boolean }
+                banner:        { type: string }
+                version:       { type: string }
+                banner_match:  { type: boolean }
+                response_time: { type: integer, format: int64, description: Duration in nanoseconds }
+                success:       { type: boolean }
+                error:         { type: string, nullable: true }
+                checked_at:    { type: string, format: date-time }
+            page_load_result:
+              type: object
+              nullable: true
+              properties:
+                url:              { type: string }
+                response_time:    { type: integer, format: int64 }
+                ttfb:             { type: integer, format: int64 }
+                dom_content_load: { type: integer, format: int64 }
+                page_load:        { type: integer, format: int64 }
+                fcp:              { type: integer, format: int64 }
+                lcp:              { type: integer, format: int64 }
+                cls:              { type: number }
+                resource_count:   { type: integer }
+                transfer_size:    { type: integer, format: int64 }
+                console_errors:   { type: array, items: { type: string } }
+                http_status_code: { type: integer }
+                success:          { type: boolean }
+                error:            { type: string, nullable: true }
+                checked_at:       { type: string, format: date-time }
+            broken_links_result:
+              type: object
+              nullable: true
+              properties:
+                target_url:   { type: string }
+                total_links:  { type: integer }
+                broken_count: { type: integer }
+                broken_links:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      url:         { type: string }
+                      status_code: { type: integer }
+                      error:       { type: string }
+                success:    { type: boolean }
+                error:      { type: string, nullable: true }
+                checked_at: { type: string, format: date-time }
+            domain_expiry_result:
+              type: object
+              nullable: true
+              properties:
+                domain:            { type: string }
+                expiry_date:       { type: string, format: date-time }
+                days_until_expiry: { type: integer }
+                is_expired:        { type: boolean }
+                registrar:         { type: string }
+                response_time:     { type: integer, format: int64 }
+                success:           { type: boolean }
+                error:             { type: string, nullable: true }
+                checked_at:        { type: string, format: date-time }
+
+    AlertRule:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        user_id:      { type: string, format: uuid }
+        schedule_id:  { type: string, format: uuid }
+        name:         { type: string }
+        metric:
+          type: string
+          enum:
+            - response_time_ms
+            - ssl_days_remaining
+            - status_code
+            - job_success
+            - dnsbl_listed_count
+            - dnsbl_listed
+            - ehlo_connected
+            - ehlo_tls_used
+            - spf_valid
+            - dmarc_valid
+            - dkim_valid
+            - ssh_banner_match
+            - dmarc_compliance_pct
+            - baseline_deviation
+            - ttfb_ms
+            - page_load_ms
+            - fcp_ms
+        condition:
+          type: string
+          enum: [gt, lt, gte, lte, eq]
+        threshold:         { type: number }
+        consecutive_count: { type: integer }
+        cooldown_minutes:  { type: integer }
+        is_enabled:        { type: boolean }
+        created_at:        { type: string, format: date-time }
+        updated_at:        { type: string, format: date-time }
+
+    MetricTimeSeriesPoint:
+      type: object
+      properties:
+        timestamp:          { type: string, format: date-time }
+        avg_latency_ms:     { type: number }
+        max_latency_ms:     { type: number }
+        min_latency_ms:     { type: number }
+        total_requests:     { type: integer, format: int64 }
+        successful_requests: { type: integer, format: int64 }
+        uptime_percent:     { type: number }
+
+    HTTPMetricPoint:
+      allOf:
+        - $ref: "#/components/schemas/MetricTimeSeriesPoint"
+
+    DNSMetricPoint:
+      allOf:
+        - $ref: "#/components/schemas/MetricTimeSeriesPoint"
+
+    SSLMetricPoint:
+      allOf:
+        - $ref: "#/components/schemas/MetricTimeSeriesPoint"
+      properties:
+        avg_days_until_expiry: { type: number }
+
+    SSHMetricPoint:
+      allOf:
+        - $ref: "#/components/schemas/MetricTimeSeriesPoint"
+
+    EmailAuthMetricPoint:
+      allOf:
+        - $ref: "#/components/schemas/MetricTimeSeriesPoint"
+      properties:
+        spf_valid_count:   { type: integer, format: int64 }
+        dmarc_valid_count: { type: integer, format: int64 }
+        dkim_valid_count:  { type: integer, format: int64 }
+
+    PageLoadMetricPoint:
+      type: object
+      properties:
+        timestamp:            { type: string, format: date-time }
+        avg_response_time_ms: { type: number }
+        max_response_time_ms: { type: number }
+        min_response_time_ms: { type: number }
+        avg_ttfb_ms:          { type: number }
+        avg_dom_load_ms:      { type: number }
+        avg_page_load_ms:     { type: number }
+        total_requests:       { type: integer, format: int64 }
+        successful_requests:  { type: integer, format: int64 }
+        uptime_percent:       { type: number }
+
+    DMARCMetricPoint:
+      type: object
+      properties:
+        timestamp:              { type: string, format: date }
+        domain:                 { type: string }
+        total_messages:         { type: integer, format: int64 }
+        dkim_pass:              { type: integer, format: int64 }
+        dkim_fail:              { type: integer, format: int64 }
+        spf_pass:               { type: integer, format: int64 }
+        spf_fail:               { type: integer, format: int64 }
+        disposition_none:       { type: integer, format: int64 }
+        disposition_quarantine: { type: integer, format: int64 }
+        disposition_reject:     { type: integer, format: int64 }
+        dmarc_pass:             { type: integer, format: int64 }
+
+security:
+  - apiKey: []
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      security: []
+      tags: [System]
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /v1/schedules:
+    get:
+      operationId: listSchedules
+      summary: List schedules
+      tags: [Schedules]
+      responses:
+        "200":
+          description: List of schedules belonging to the authenticated organisation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Schedule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/schedules/{id}:
+    get:
+      operationId: getSchedule
+      summary: Get a schedule
+      tags: [Schedules]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+      responses:
+        "200":
+          description: Schedule detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Schedule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs for a schedule
+      tags: [Jobs]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/jobs/{job_id}:
+    get:
+      operationId: getJob
+      summary: Get a single job
+      tags: [Jobs]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/jobId"
+      responses:
+        "200":
+          description: Job detail including full results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/alerts:
+    get:
+      operationId: listAlerts
+      summary: List alert rules for a schedule
+      tags: [Alerts]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+      responses:
+        "200":
+          description: Alert rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AlertRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/metrics/http:
+    get:
+      operationId: getHTTPMetrics
+      summary: HTTP check metrics time series
+      tags: [Metrics]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+      responses:
+        "200":
+          description: HTTP metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/HTTPMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/metrics/dns:
+    get:
+      operationId: getDNSMetrics
+      summary: DNS check metrics time series
+      tags: [Metrics]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+      responses:
+        "200":
+          description: DNS metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DNSMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/metrics/ssl:
+    get:
+      operationId: getSSLMetrics
+      summary: SSL certificate metrics time series
+      tags: [Metrics]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+      responses:
+        "200":
+          description: SSL metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SSLMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/metrics/email_auth:
+    get:
+      operationId: getEmailAuthMetrics
+      summary: Email authentication (SPF/DKIM/DMARC) metrics time series
+      tags: [Metrics]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+      responses:
+        "200":
+          description: Email auth metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/EmailAuthMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/metrics/pageload:
+    get:
+      operationId: getPageLoadMetrics
+      summary: Page load performance metrics time series
+      tags: [Metrics]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+      responses:
+        "200":
+          description: Page load metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PageLoadMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/schedules/{id}/metrics/ssh:
+    get:
+      operationId: getSSHMetrics
+      summary: SSH banner check metrics time series
+      tags: [Metrics]
+      parameters:
+        - $ref: "#/components/parameters/scheduleId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+      responses:
+        "200":
+          description: SSH metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SSHMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/dmarc/reports:
+    get:
+      operationId: listDMARCReports
+      summary: List DMARC reports
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated DMARC report list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:  { type: array, items: { type: object } }
+                  count: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/reports/{id}:
+    get:
+      operationId: getDMARCReport
+      summary: Get a DMARC report with its records
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/reportId"
+      responses:
+        "200":
+          description: DMARC report and individual records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  report:  { type: object }
+                  records: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/dmarc/metrics:
+    get:
+      operationId: getDMARCMetrics
+      summary: DMARC pass/fail metrics over time
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Daily DMARC metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DMARCMetricPoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/geo:
+    get:
+      operationId: getDMARCGeo
+      summary: DMARC sending volume by country
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Geographic breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/top-ips:
+    get:
+      operationId: getDMARCTopIPs
+      summary: Top sending IPs
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Top IPs by message volume
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/top-failing-ips:
+    get:
+      operationId: getDMARCTopFailingIPs
+      summary: Top IPs with DMARC failures
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Top failing IPs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/top-senders:
+    get:
+      operationId: getDMARCTopSenders
+      summary: Top sending domains
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Top senders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/fail-reasons:
+    get:
+      operationId: getDMARCFailReasons
+      summary: Breakdown of DMARC failure reasons
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Failure reason counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/reporters:
+    get:
+      operationId: getDMARCReporters
+      summary: Organisations that have sent DMARC reports
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Reporter list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/dmarc/top-asns:
+    get:
+      operationId: getDMARCTopASNs
+      summary: Top autonomous systems by sending volume
+      tags: [DMARC]
+      parameters:
+        - $ref: "#/components/parameters/domain"
+      responses:
+        "200":
+          description: Top ASNs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
